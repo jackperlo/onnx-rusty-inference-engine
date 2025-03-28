@@ -4,6 +4,7 @@ target/
 # Rust dependencies
 Cargo.lock
 
+
 # Build artifacts
 **/*.rs.bk
 
