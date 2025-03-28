@@ -1,24 +1,24 @@
-pub mod onnx_structure;
-mod read_proto;
-mod read_onnx;
-mod write_onnx;
+use std::fs::File;
+use std::io::Read;
+use pyo3::prelude::*;
+use protobuf::Message;
+
 mod convolution_op;
 mod relu_op;
 mod max_pool_op;
 mod dropout_op;
 mod global_average_pool_op;
 mod softmax;
-mod model_inference;
 mod reshape_op;
 
-use std::fs::File;
-use std::io::Read;
-use pyo3::prelude::*;
+pub mod onnx_parser;
+pub mod protobuf_parser;
+pub mod inference_engine;
 
-use crate::onnx_structure::{ModelProto, TensorProto};
-use crate::read_onnx::generate_onnx_model;
-use crate::model_inference::inference;
-use protobuf::Message;
+use crate::onnx_parser::onnx_structure::{ModelProto, TensorProto};
+use crate::onnx_parser::read_onnx::generate_onnx_model;
+use crate::inference_engine::model_inference::inference;
+
 
 /// A Python module implemented in Rust.
 #[pymodule]

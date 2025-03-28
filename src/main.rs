@@ -1,25 +1,18 @@
-pub mod onnx_structure;
-
 use std::io::{Read};
 use std::fs::{File};
 use protobuf::{Message};
 
-mod read_proto;
-mod read_onnx;
-mod write_onnx;
 mod convolution_op;
 mod relu_op;
 mod max_pool_op;
 mod dropout_op;
 mod global_average_pool_op;
 mod softmax;
-mod model_inference;
 mod reshape_op;
 
-use crate::read_onnx::generate_onnx_model;
-use crate::model_inference::inference;
-use crate::onnx_structure::{ModelProto, NodeProto, TensorProto};
-use crate::write_onnx::generate_onnx_file;
+use onnx_rusty_inference_engine::onnx_parser::utils::generate_onnx_file;
+use onnx_rusty_inference_engine::inference_engine::model_inference::inference;
+use onnx_rusty_inference_engine::onnx_parser::onnx_structure::{ModelProto, NodeProto, TensorProto};
 
 fn main() {
   //MNIST-8

@@ -21,7 +21,7 @@
 
 //! Generated file from `proto/onnx.proto`
 use protobuf::{Enum, EnumOrUnknown, MessageField};
-use crate::onnx_structure::attribute_proto::AttributeType;
+use crate::onnx_parser::onnx_structure::attribute_proto::AttributeType;
 
 // Generated for lite runtime
 /// Generated files are compatible only with the same version

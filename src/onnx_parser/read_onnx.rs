@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use crate::onnx_structure::ModelProto;
-use crate::read_proto::create_struct_from_proto_file;
-use crate::read_proto::proto_structure::{KindOf, Proto};
+
+use crate::onnx_parser::onnx_structure::ModelProto;
+use crate::protobuf_parser::parse_proto::create_struct_from_proto_file;
+use crate::protobuf_parser::proto_structure::{KindOf, Proto};
 
 /*
 This function allows the program to read a .onnx file byte per byte and, thanks to the proto_structure previously read, to generate a onnx runtime model.

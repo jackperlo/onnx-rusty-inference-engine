@@ -45,11 +45,12 @@ impl FromStr for ProtoAnnotation {
 /*
 This structure helps to print not supported string annotations
 */
+#[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParseProtoAnnotationError(String);
 impl fmt::Display for ParseProtoAnnotationError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Invalid ProtoAnnotation string '{}'.\n\t\
+    write!(f, "Invalid ProtoAnnotation string: '{}'.\n\t\
       Supported are: [Optional, Repeated, Map].\n\
       Note: 'Required' is now strongly deprecated.\n\
       Update to new schema or change annotation type;\n\
@@ -76,7 +77,7 @@ pub struct ProtoAttribute {
   pub attribute_type: String
 }
 impl ProtoAttribute {
-  pub(crate) fn new() -> Self {
+  pub fn new() -> Self {
     Self {
       annotation: Default::default(),
       attribute_name: Default::default(),
@@ -108,6 +109,31 @@ pub enum ProtoVersion{
   Proto2,
   Proto3
 }
+impl FromStr for ProtoVersion {
+  type Err = ParseProtoVersionError;
+  // this allows to automatically parse() from a string (red from .proto file)
+  // into a ProtoVersion Type
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "2" => Ok(ProtoVersion::Proto2),
+      "3" => Ok(ProtoVersion::Proto3),
+      _ => Err(ParseProtoVersionError(s.to_string()))
+    }
+  }
+}
+
+/*
+This structure helps to print not supported proto versions
+*/
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParseProtoVersionError(String);
+impl fmt::Display for ParseProtoVersionError {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "Invalid ProtoVersion syntax: '{}'.\n\t Supported are: [Proto2, Proto3].", self.0)
+  }
+}
+impl std::error::Error for ParseProtoVersionError {}
 
 /*
 This structure contains a "message" structure or a "one of" structure contained in a .proto file.
@@ -171,7 +197,7 @@ pub struct Proto {
   pub contents: HashMap<String, Proto> //<name, Proto>, recursion supported
 }
 impl Proto{
-  pub(crate) fn new(proto_version: ProtoVersion, kind_of: KindOf) -> Self {
+  pub fn new(proto_version: ProtoVersion, kind_of: KindOf) -> Self {
     Self {
       proto_version,
       kind_of,

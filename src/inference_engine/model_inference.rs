@@ -4,13 +4,14 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use ndarray::{Array1, Array2, Array3, Array4, Axis, concatenate};
 use num_traits::Float;
-use crate::onnx_structure::{ModelProto, NodeProto, TensorProto, ValueInfoProto};
+
+use crate::onnx_parser::onnx_structure::{ModelProto, NodeProto, TensorProto, ValueInfoProto};
 
 use crate::convolution_op::{ConvolutionLayer as ConvLayerConv, Padding as PadConv};
 use crate::dropout_op::dropout;
 use crate::global_average_pool_op::global_average_pool;
-use crate::onnx_structure::tensor_shape_proto::dimension::Value::{DimParam, DimValue};
-use crate::onnx_structure::type_proto::Value;
+use crate::onnx_parser::onnx_structure::tensor_shape_proto::dimension::Value::{DimParam, DimValue};
+use crate::onnx_parser::onnx_structure::type_proto::Value;
 use crate::relu_op::relu;
 use crate::max_pool_op::{ConvolutionLayer as ConvLayerMaxPool, Padding as PadMaxPool};
 use crate::reshape_op::reshape;

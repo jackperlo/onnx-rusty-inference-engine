@@ -1,7 +1,7 @@
 use ndarray::{Array, Array4, Axis};
 
 //OPSET VERSION. N channel out
-pub(crate) fn global_average_pool(x: Array4<f32>) -> Array4<f32> {
+pub fn global_average_pool(x: Array4<f32>) -> Array4<f32> {
   let mut output: Array4<f32> = Array::zeros((
     x.len_of(Axis(0)),
     x.len_of(Axis(1)),
