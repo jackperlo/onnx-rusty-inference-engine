@@ -1,0 +1,54 @@
+# Target directory (compiled output)
+target/
+
+# Rust dependencies
+Cargo.lock
+
+# Build artifacts
+**/*.rs.bk
+
+# Debugging files
+debug/
+*.log
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+
+# Temporary files
+*.swp
+*.swo
+*.bak
+
+# Generated documentation
+/target/doc/
+
+# Test binaries and coverage
+/tests/*.exe
+/tests/*.out
+/tests/*.log
+/tests/*.profdata
+
+# Cargo-specific files
+/.cargo/
+/.cargo-lock
+
+# Rustfmt and Clippy (style check)
+rustfmt.toml
+clippy.toml
+
+# Binary artifacts
+*.dSYM/
+*.pdb
+*.so
+*.rlib
+*.dll
+*.dylib
+*.exe
+*.a
+*.o
+
+# MacOS / Windows system files
+.DS_Store
+Thumbs.db
