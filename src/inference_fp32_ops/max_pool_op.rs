@@ -22,7 +22,7 @@ pub struct ConvolutionLayer<F: Float> {
   pub(in crate) auto_pad: Padding,
   pub(in crate) pads: Array1<F>,
   pub(in crate) kernel_size: Array2<i32>,
-  pub(in crate) storage_order: Option<i32>,
+  pub(in crate) storage_order: Option<i64>,
   pub(in crate) strides: Array1<F>,
 }
 
@@ -32,7 +32,7 @@ impl<F: 'static + Float + std::ops::AddAssign> ConvolutionLayer<F> where f32: Fr
     auto_pad: Padding,
     pads: Array1<F>,
     kernel_size: Array2<i32>,
-    storage_order: Option<i32>,
+    storage_order: Option<i64>,
     strides: Array1<F>,
   ) -> ConvolutionLayer<F> {
     ConvolutionLayer { auto_pad, pads, kernel_size, storage_order, strides }
@@ -82,7 +82,7 @@ pub fn max_pool2d<'a, T, V, F: 'static + Float + std::ops::AddAssign>(
   auto_pad: Padding,
   pads: V,
   kernel_size: &Array2<i32>,
-  _storage_order: Option<&i32>,
+  _storage_order: Option<&i64>,
   strides: V,
 ) -> Array4<F>
   where

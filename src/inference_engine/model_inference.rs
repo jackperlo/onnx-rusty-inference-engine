@@ -4,18 +4,13 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use ndarray::{Array1, Array2, Array3, Array4, Axis, concatenate};
 use num_traits::Float;
+use onnx_protobuf::*;
+use onnx_protobuf::type_proto::Value;
+use onnx_protobuf::tensor_shape_proto::dimension::Value::{DimParam, DimValue};
 
-use crate::onnx_parser::onnx_structure::{ModelProto, NodeProto, TensorProto, ValueInfoProto};
-
-use crate::convolution_op::{ConvolutionLayer as ConvLayerConv, Padding as PadConv};
-use crate::dropout_op::dropout;
-use crate::global_average_pool_op::global_average_pool;
-use crate::onnx_parser::onnx_structure::tensor_shape_proto::dimension::Value::{DimParam, DimValue};
-use crate::onnx_parser::onnx_structure::type_proto::Value;
-use crate::relu_op::relu;
-use crate::max_pool_op::{ConvolutionLayer as ConvLayerMaxPool, Padding as PadMaxPool};
-use crate::reshape_op::reshape;
-use crate::softmax::softmax;
+use crate::inference_fp32_ops::convolution_op::{ConvolutionLayer as ConvLayerConv, Padding as PadConv};
+use crate::inference_fp32_ops::max_pool_op::{ConvolutionLayer as ConvLayerMaxPool, Padding as PadMaxPool};
+use crate::inference_fp32_ops::*;
 
 
 /*
@@ -195,13 +190,9 @@ This function execute the inference operation of the node.
     ~ model: smart pointer that contains the onnx model
 */
 pub fn node_inference(node: &NodeProto, hashmap_outputs_to_inputs: &Arc<Mutex<HashMap<String, (Option<Array2<f32>>, Option<Array4<f32>>)>>>, model: &Arc<ModelProto>) {
-  println!("INFERENCE ON INPUT(s) {:?} OVER {} OPERATION done by {}", node.input, node.op_type.clone().unwrap() ,thread::current().name().unwrap_or("PROCESSO PRINCIPALE"));
+  println!("INFERENCE ON INPUT(s) {:?} OVER {} OPERATION done by {}", node.input, node.op_type.clone() ,thread::current().name().unwrap_or("PROCESSO PRINCIPALE"));
 
-  let operation = match &node.op_type {
-    None => { panic!("Operation {:?} NOT found for node {}", &node.op_type, &node.name.as_ref().unwrap()) }
-    Some(op) => { op }
-  };
-
+  let operation = &node.op_type;
   match operation.as_str() {
     "Conv" => convolution_op(hashmap_outputs_to_inputs, node, &model.graph.input, &model.graph.initializer),
     "Relu" => relu_op(hashmap_outputs_to_inputs, node),
@@ -213,7 +204,7 @@ pub fn node_inference(node: &NodeProto, hashmap_outputs_to_inputs: &Arc<Mutex<Ha
     "Reshape" => reshape_op(hashmap_outputs_to_inputs, node, &model.graph.input, &model.graph.initializer),
     "Add" => add_op(hashmap_outputs_to_inputs, node, &model.graph.input, &model.graph.initializer),
     "MatMul" => mul_op(hashmap_outputs_to_inputs, node),
-    _ => { panic!("INFERENCE OPERATION '{}' NOT FOUND FOR NODE {}", operation.as_str(), &node.name.as_ref().unwrap()) }
+    _ => { panic!("INFERENCE OPERATION '{}' NOT FOUND FOR NODE {}", operation.as_str(), &<std::string::String as AsRef<str>>::as_ref(&node.name)) }
   }
 }
 
@@ -272,25 +263,23 @@ fn convolution_op(output_container: &Arc<Mutex<HashMap<String, (Option<Array2<f3
   let mut strides: Array1<f32> = Default::default();
   let mut pads: Array1<f32> = Default::default();
   let mut auto_pad: PadConv = PadConv::Valid;
-  let mut group: Option<i32> = Some(1);
+  let mut group: Option<i64> = Some(1);
   let mut dilations: Option<Array2<i32>> = None;
   for attr in &node.attribute {
-    if attr.name.is_some() {
-      match attr.name.as_ref().unwrap().as_str() {
-        "auto_pad" => match std::str::from_utf8(&attr.s.clone().unwrap()).unwrap() {
-          "SAME_UPPER" => auto_pad = PadConv::SameUpper,
-          "SAME_LOWER" => auto_pad = PadConv::SameLower,
-          "VALID" => auto_pad = PadConv::Valid,
-          "NOT_SET" => auto_pad = PadConv::NotSet,
-          _ => panic!("Convolution Auto Pad specified not found: {}", std::str::from_utf8(&attr.s.clone().unwrap()).unwrap())
-        },
-        "dilations" => dilations = Some(Array2::from_shape_vec((1, 2), vec![attr.ints[0] as i32, attr.ints[1] as i32]).unwrap()),
-        "group" => group = Some(attr.i.unwrap() as i32),
-        "kernel_shape" => {}
-        "pads" => pads = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
-        "strides" => strides = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
-        _ => panic!("ATTRIBUTE NAME FOR CONVOLUTION NOT FOUND, {}", attr.name.as_ref().unwrap().as_str())
-      }
+    match attr.name.as_ref() {
+      "auto_pad" => match std::str::from_utf8(&attr.s.clone()).unwrap() {
+        "SAME_UPPER" => auto_pad = PadConv::SameUpper,
+        "SAME_LOWER" => auto_pad = PadConv::SameLower,
+        "VALID" => auto_pad = PadConv::Valid,
+        "NOT_SET" => auto_pad = PadConv::NotSet,
+        _ => panic!("Convolution Auto Pad specified not found: {}", std::str::from_utf8(&attr.s.clone()).unwrap())
+      },
+      "dilations" => dilations = Some(Array2::from_shape_vec((1, 2), vec![attr.ints[0] as i32, attr.ints[1] as i32]).unwrap()),
+      "group" => group = Some(attr.i),
+      "kernel_shape" => {}
+      "pads" => pads = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
+      "strides" => strides = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
+      _ => panic!("ATTRIBUTE NAME FOR CONVOLUTION NOT FOUND, {}", <std::string::String as AsRef<str>>::as_ref(&attr.name))
     }
   }
 
@@ -325,7 +314,7 @@ fn relu_op(output_container: &Arc<Mutex<HashMap<String, (Option<Array2<f32>>, Op
 
   drop(map);
 
-  let output_layer: Array4<f32> = relu(&input);
+  let output_layer: Array4<f32> = relu_op::relu(&input);
 
   //dbg!("Relu: {:?}", output_layer.clone());
 
@@ -360,23 +349,21 @@ fn max_pool_op(output_container: &Arc<Mutex<HashMap<String, (Option<Array2<f32>>
   let mut strides: Array1<f32> = Default::default();
   let mut pads: Array1<f32> = Default::default();
   let mut auto_pad: PadMaxPool = PadMaxPool::Valid;
-  let mut storage_order: Option<i32> = None;
+  let mut storage_order: Option<i64> = None;
   for attr in &node.attribute {
-    if attr.name.is_some() {
-      match attr.name.as_ref().unwrap().as_str() {
-        "auto_pad" => match std::str::from_utf8(&attr.s.clone().unwrap()).unwrap() {
-          "SAME_UPPER" => auto_pad = PadMaxPool::SameUpper,
-          "SAME_LOWER" => auto_pad = PadMaxPool::SameLower,
-          "VALID" => auto_pad = PadMaxPool::Valid,
-          "NOTSET" => auto_pad = PadMaxPool::NotSet,
-          _ => panic!("MaxPool Auto Pad specified not found: {}", std::str::from_utf8(&attr.s.clone().unwrap()).unwrap())
-        },
-        "kernel_shape" => kernel_shape = Array2::zeros((attr.ints[0].clone() as usize, attr.ints[1].clone() as usize)),
-        "pads" => pads = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
-        "storage_order" => storage_order = Some(attr.i.unwrap() as i32),
-        "strides" => strides = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
-        _ => panic!("ATTRIBUTE NAME FOR MAXPOOL NOT FOUND, {}", attr.name.as_ref().unwrap().as_str())
-      }
+    match attr.name.as_ref() {
+      "auto_pad" => match std::str::from_utf8(&attr.s.clone()).unwrap() {
+        "SAME_UPPER" => auto_pad = PadMaxPool::SameUpper,
+        "SAME_LOWER" => auto_pad = PadMaxPool::SameLower,
+        "VALID" => auto_pad = PadMaxPool::Valid,
+        "NOTSET" => auto_pad = PadMaxPool::NotSet,
+        _ => panic!("MaxPool Auto Pad specified not found: {}", std::str::from_utf8(&attr.s.clone()).unwrap())
+      },
+      "kernel_shape" => kernel_shape = Array2::zeros((attr.ints[0].clone() as usize, attr.ints[1].clone() as usize)),
+      "pads" => pads = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
+      "storage_order" => storage_order = Some(attr.i),
+      "strides" => strides = attr.ints.clone().iter().map(|&x| x as f32).collect::<Vec<f32>>().into(),
+      _ => panic!("ATTRIBUTE NAME FOR MAXPOOL NOT FOUND, {}", <std::string::String as AsRef<str>>::as_ref(&attr.name))
     }
   }
   let conv_layer = ConvLayerMaxPool::new(auto_pad, pads, kernel_shape, storage_order, strides);
@@ -405,12 +392,10 @@ fn concatenate_op(output_container: &Arc<Mutex<HashMap<String, (Option<Array2<f3
   let mut axis = 1;
 
   for attr in &node.attribute {
-    if attr.name.is_some() {
-      axis = match attr.name.as_ref().unwrap().as_str() {
-        "axis" => attr.i.unwrap(),
-        _ => panic!("ATTRIBUTE NAME FOR CONCATENATE NOT FOUND, {}", attr.name.as_ref().unwrap().as_str())
-      };
-    }
+    axis = match attr.name.as_ref() {
+      "axis" => attr.i,
+      _ => panic!("ATTRIBUTE NAME FOR CONCATENATE NOT FOUND, {}", <std::string::String as AsRef<str>>::as_ref(&attr.name))
+    };
   }
   let output_layer: Array4<f32> = concatenate(Axis(axis as usize), &[input_1.view(), input_2.view()]).unwrap();
 
@@ -435,14 +420,12 @@ fn drop_out_op(output_container: &Arc<Mutex<HashMap<String, (Option<Array2<f32>>
 
   let mut ratio: Option<f32> = None;
   for attr in &node.attribute {
-    if attr.name.is_some() {
-      ratio = match attr.name.as_ref().unwrap().as_str() {
-        "ratio" => Some(attr.f.unwrap()),
-        _ => panic!("ATTRIBUTE NAME FOR DROP OUT NOT FOUND, {}", attr.name.as_ref().unwrap().as_str())
+      ratio = match attr.name.as_ref() {
+        "ratio" => Some(attr.f),
+        _ => panic!("ATTRIBUTE NAME FOR DROP OUT NOT FOUND, {}", <String as AsRef<str>>::as_ref(&attr.name))
       };
-    }
   }
-  let output_layer = dropout(input, ratio, None, false, false);
+  let output_layer = dropout_op::dropout(input, ratio, None, false, false);
 
   /*
    if output_layer.1.is_some() {
@@ -470,7 +453,7 @@ fn global_average_pool_op(output_container: &Arc<Mutex<HashMap<String, (Option<A
 
   drop(map);
 
-  let output_layer = global_average_pool(input);
+  let output_layer = global_average_pool_op::global_average_pool(input);
 
   //dbg!(output_layer);
   println!("GlobalAveragePool, done!");
@@ -491,7 +474,7 @@ fn softmax_op(output_container: &Arc<Mutex<HashMap<String, (Option<Array2<f32>>,
 
   drop(map);
 
-  let result = softmax(input, None);
+  let result = softmax::softmax(input, None);
 
   println!("Softmax, done!");
   //dbg!(result.clone());
@@ -538,7 +521,7 @@ fn reshape_op(output_container: &Arc<Mutex<HashMap<String, (Option<Array2<f32>>,
     panic!("Cannot get Shape for Reshape operation");
   }
 
-  let output_layer: Array2<f32> = reshape(data, shape, None);
+  let output_layer: Array2<f32> = reshape_op::reshape(data, shape, None);
 
   //dbg!("Reshape: {:?}", output_layer.clone());
   println!("Reshape, done! by {}", thread::current().name().unwrap_or("PROCESSO PRINCIPALE"));
@@ -673,21 +656,19 @@ fn get_stored_tensor_for_convolution(i: usize, node: &NodeProto, model_inputs: &
   let mut raw_data: Vec<f32> = vec![];
   let mut raw_data_i64: Vec<i64> = vec![];
   for init in model_initializers {
-    if init.name.is_some() {
-      if init.name.as_ref().unwrap() == &node.input[i] {
-        if init.raw_data.is_some() {
-          for chunk in init.raw_data.as_ref().unwrap().chunks(4) {
-            let float32 = u8_to_f32(chunk);
-            raw_data.push(float32);
-          }
-        } else if init.float_data.len() > 0 {
-          for float_value in &init.float_data {
-            raw_data.push(*float_value);
-          }
-        } else if init.int64_data.len() > 0 {
-          for int_value in &init.int64_data {
-            raw_data_i64.push(*int_value);
-          }
+    if <std::string::String as AsRef<str>>::as_ref(&init.name) == &node.input[i] {
+      if init.raw_data.len() > 0 {
+        for chunk in <Vec<u8> as AsRef<[u8]>>::as_ref(&init.raw_data).chunks(4) {
+          let float32 = u8_to_f32(chunk);
+          raw_data.push(float32);
+        }
+      } else if init.float_data.len() > 0 {
+        for float_value in &init.float_data {
+          raw_data.push(*float_value);
+        }
+      } else if init.int64_data.len() > 0 {
+        for int_value in &init.int64_data {
+          raw_data_i64.push(*int_value);
         }
       }
     }
@@ -730,34 +711,36 @@ This function searches the node's input shape(s) into the onnx model.
 fn search_input_data_shape<'a>(model_inputs: &'a Vec<ValueInfoProto>, input_name: &str) -> Vec<&'a i64> {
   let mut shape = vec![];
   for inp in model_inputs {
-    if inp.name.is_some() {
-      if inp.name.as_ref().unwrap() == input_name {
-        if inp.type_.value.is_some() {
-          match &inp.type_.value.as_ref().unwrap() {
-            Value::TensorType(t) => {
-              if t.shape.is_some() {
-                for el in &t.shape.as_ref().unwrap().dim {
-                  if el.value.is_some() {
-                    match el.value.as_ref().unwrap() {
-                      DimValue(v) => { shape.push(v) }
-                      DimParam(_) => {}
-                    }
-                  }
+    if <std::string::String as AsRef<str>>::as_ref(&inp.name) == input_name {
+      if inp.type_.value.is_some() {
+        match &inp.type_.value.as_ref().unwrap() {
+          Value::TensorType(t) => {
+            if t.shape.is_some() {
+              for el in &t.shape.as_ref().unwrap().dim {
+                if el.value.is_some() {
+                  match el.value.as_ref().unwrap() {
+                    DimValue(v) => { shape.push(v) }
+                    DimParam(_) => {}
+                    _ => {}
+                  };
+                }else {
+                  panic!("ERROR WHILE GETTING DIMS VALUE OF NODE {}'S INPUT", input_name)
                 }
-              } else {
-                panic!("ERROR WHILE GETTING SHAPE OF NODE {}", input_name)
               }
+            } else {
+              panic!("ERROR WHILE GETTING SHAPE OF NODE {}'S INPUT", input_name)
             }
-            Value::SequenceType(_) => {}
-            Value::MapType(_) => {}
-            Value::OptionalType(_) => {}
-            Value::SparseTensorType(_) => {}
-          };
-        } else {
-          panic!("ERROR WHILE GETTING TYPE_ OF NODE {}", input_name)
-        }
-        break;
+          }
+          Value::SequenceType(_) => {}
+          Value::MapType(_) => {}
+          Value::OptionalType(_) => {}
+          Value::SparseTensorType(_) => {}
+          _ => {}
+        };
+      } else {
+        panic!("ERROR WHILE GETTING TYPE_ OF NODE {}", input_name)
       }
+      break;
     }
   }
   shape
@@ -772,10 +755,8 @@ This function searches if a node's input is already in the model's initializers
 */
 fn already_into_initializer(model_initializers: &Vec<TensorProto>, input_name: &str) -> bool {
   for init in model_initializers {
-    if init.name.is_some() {
-      if init.name.as_ref().unwrap() == input_name {
-        return true;
-      }
+    if <std::string::String as AsRef<str>>::as_ref(&init.name) == input_name {
+      return true;
     }
   }
   false

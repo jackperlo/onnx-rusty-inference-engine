@@ -13,9 +13,10 @@ name = "onnx_rusty_inference_engine_bin"
 path = "src/main.rs"
 
 [dependencies]
-protobuf = "3.2.0"
+protobuf = "=3.4.0"
 ndarray = "0.15.3"
 num-traits = "0.2"
 ndarray-npy = "0.8.1"
 rand = {version="0.8.5", features = [ "small_rng" ]}
 pyo3 = "0.19.0"
+onnx-protobuf = "0.2.3"

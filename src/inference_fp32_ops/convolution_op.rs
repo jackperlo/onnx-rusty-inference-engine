@@ -24,7 +24,7 @@ pub struct ConvolutionLayer<F: Float> {
   pub(in crate) bias: Option<Array1<F>>,
   pub(in crate) auto_pad: Padding,
   pub(in crate) dilations: Option<Array2<i32>>,
-  pub(in crate) group: Option<i32>,
+  pub(in crate) group: Option<i64>,
   pub(in crate) pads: Array1<F>,
   pub(in crate) strides: Array1<F>,
 }
@@ -36,7 +36,7 @@ impl<F: 'static + Float + std::ops::AddAssign + std::default::Default + std::con
     bias: Option<Array1<F>>,
     auto_pad: Padding,
     dilations: Option<Array2<i32>>,
-    group: Option<i32>,
+    group: Option<i64>,
     pads: Array1<F>,
     strides: Array1<F>,
   ) -> ConvolutionLayer<F> {
@@ -52,7 +52,7 @@ impl<F: 'static + Float + std::ops::AddAssign + std::default::Default + std::con
     bias: Option<Array1<F>>,
     auto_pad: Padding,
     dilations: Option<Array2<i32>>,
-    group: Option<i32>,
+    group: Option<i64>,
     pads: Array1<F>,
     strides: Array1<F>,
   ) -> ConvolutionLayer<F> {
@@ -112,7 +112,7 @@ pub fn conv2d<'a, T, V, F: 'static + Float + std::ops::AddAssign + std::default:
   bias: Option<&Array1<F>>,
   auto_pad: Padding,
   dilations: Option<&Array2<i32>>,
-  group: Option<i32>,
+  group: Option<i64>,
   pads: V, //Option<&Array1<F>>
   strides: V, //Option<&Array1<F>>
 ) -> DataRepresentation<F>
