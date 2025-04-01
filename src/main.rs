@@ -4,6 +4,7 @@ use protobuf::{Message};
 use onnx_protobuf::{ModelProto,TensorProto};
 
 use onnx_rusty_inference_engine::inference_engine::model_inference::inference;
+use onnx_rusty_inference_engine::inference_engine::utils::u8_to_f32;
 
 fn main() {
   //MNIST-8
@@ -51,9 +52,4 @@ fn read_input_data(input_path: &str) -> Option<Vec<f32>> {
   Some(parsed_message.raw_data.clone().chunks_exact(4).map(|chunk| u8_to_f32(chunk)).collect())
 }
 
-fn u8_to_f32(bytes: &[u8]) -> f32 {
-  assert_eq!(bytes.len(), 4);
-  let mut array: [u8; 4] = Default::default();
-  array.copy_from_slice(&bytes);
-  f32::from_le_bytes(array)
-}
+

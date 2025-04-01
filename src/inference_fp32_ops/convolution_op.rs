@@ -1,11 +1,18 @@
 use ndarray::*;
 use num_traits::Float;
+use std::collections::HashMap;
+use std::thread;
+use std::sync::{Arc, Mutex};
+use ndarray::{Array1, Array2, Array4, Axis};
+use onnx_protobuf::{TensorProto, NodeProto, ValueInfoProto};
 
-pub type DataRepresentation<F> = Array4<F>;
+use crate::inference_engine::utils::get_stored_tensor;
+
+type DataRepresentation<F> = Array4<F>;
 
 // Padding (specific way of adding zeros to the input matrix) kind used in the convolution.
 #[derive(PartialEq, Debug, Clone, Copy)]
-pub enum Padding {
+enum Padding {
   // explicit padding (specified in "pads" parameter)
   NotSet,
   // output has same shape as input; if odd padding number, extra-padding added at bottom
@@ -19,19 +26,19 @@ pub enum Padding {
 // Rust implementation of a convolutional layer.
 // The weight matrix (aka kernel) shall have dimension (in that order)
 // channels/groups(input channels), feature maps(output channels), kernel width, kernel height,
-pub struct ConvolutionLayer<F: Float> {
-  pub(in crate) kernel: Array4<F>,
-  pub(in crate) bias: Option<Array1<F>>,
-  pub(in crate) auto_pad: Padding,
-  pub(in crate) dilations: Option<Array2<i32>>,
-  pub(in crate) group: Option<i64>,
-  pub(in crate) pads: Array1<F>,
-  pub(in crate) strides: Array1<F>,
+struct ConvolutionLayer<F: Float> {
+  kernel: Array4<F>,
+  bias: Option<Array1<F>>,
+  auto_pad: Padding,
+  dilations: Option<Array2<i32>>,
+  group: Option<i64>,
+  pads: Array1<F>,
+  strides: Array1<F>,
 }
 
 impl<F: 'static + Float + std::ops::AddAssign + std::default::Default + std::convert::From<F> + std::ops::AddAssign<f32>> ConvolutionLayer<F> where f32: From<F> {
   // Creates new convolution layer.
-  pub(crate) fn new(
+  fn new(
     kernel: Array4<F>,
     bias: Option<Array1<F>>,
     auto_pad: Padding,
@@ -47,7 +54,7 @@ impl<F: 'static + Float + std::ops::AddAssign + std::default::Default + std::con
   /// feature maps(output channels), channels/groups(input channels), kernel height, kernel width
   /// converted into:
   /// channels/groups(input channels), feature maps(output channels), kernel width, kernel height,
-  pub fn new_onnx_tensor_flow(
+  fn new_onnx_tensor_flow(
     kernel: Array4<F>,
     bias: Option<Array1<F>>,
     auto_pad: Padding,
@@ -64,7 +71,7 @@ impl<F: 'static + Float + std::ops::AddAssign + std::default::Default + std::con
   }
 
   /// Analog to conv2d.
-  pub fn convolve(&self, image: &DataRepresentation<F>) -> DataRepresentation<F> {
+  fn convolve(&self, image: &DataRepresentation<F>) -> DataRepresentation<F> {
     conv2d(
       &self.kernel,
       image,
@@ -77,6 +84,114 @@ impl<F: 'static + Float + std::ops::AddAssign + std::default::Default + std::con
     )
   }
 }
+
+/// This function manages the convolution operation
+/// # Arguments
+/// * output_container: contains the partial results calculated by inferences operations
+/// * node: node on which the convolution has to be performed
+/// * model_inputs: inputs of the onnx model
+/// * model_initializers: initializers of the onnx model
+pub fn convolution(output_container: &Arc<Mutex<HashMap<String,
+  (Option<Array2<f32>>, Option<Array4<f32>>)>>>,
+                  node: &NodeProto,
+                  model_inputs: &Vec<ValueInfoProto>,
+                  model_initializers: &Vec<TensorProto>) {
+  let map = output_container.lock().unwrap();
+  let input_image = match map.get(&node.input[0]).clone() {
+    Some(image) => image.1.clone().unwrap(),
+    None => {
+      let (arr4, _, _, _, _) = get_stored_tensor(0,
+                                                                 node,
+                                                                 model_inputs,
+                                                                 model_initializers);
+      arr4.unwrap()
+    }
+  };
+  let kernel = match map.get(&node.input[1]).clone() {
+    Some(ker) => ker.1.clone().unwrap(),
+    None => {
+      let (arr4, _, _, _, _) = get_stored_tensor(1,
+                                                                 node,
+                                                                 model_inputs,
+                                                                 model_initializers);
+      arr4.unwrap()
+    }
+  };
+
+  drop(map);
+
+  let mut bias: Option<Array1<f32>> = None;
+  if node.input.len() > 2usize {
+    let (_, _, _, arr1, _) = get_stored_tensor(2,
+                                                               node,
+                                                               model_inputs,
+                                                               model_initializers);
+    bias = Some(arr1.unwrap());
+  }
+
+  let mut strides: Array1<f32> = Default::default();
+  let mut pads: Array1<f32> = Default::default();
+  let mut auto_pad: Padding = Padding::Valid;
+  let mut group: Option<i64> = Some(1);
+  let mut dilations: Option<Array2<i32>> = None;
+  for attr in &node.attribute {
+    match attr.name.as_ref() {
+      "auto_pad" => match std::str::from_utf8(&attr.s.clone()).unwrap() {
+        "SAME_UPPER" => auto_pad = Padding::SameUpper,
+        "SAME_LOWER" => auto_pad = Padding::SameLower,
+        "VALID" => auto_pad = Padding::Valid,
+        "NOT_SET" => auto_pad = Padding::NotSet,
+        _ => panic!("Convolution Auto Pad specified not found: {}",
+                    std::str::from_utf8(&attr.s.clone()).unwrap())
+      },
+      "dilations" => dilations = Some(
+        Array2::from_shape_vec((1, 2),
+                               vec![attr.ints[0] as i32, attr.ints[1] as i32]).unwrap()),
+      "group" => group = Some(attr.i),
+      "kernel_shape" => {}
+      "pads" => pads = attr.ints.clone().iter()
+        .map(|&x| x as f32)
+        .collect::<Vec<f32>>()
+        .into(),
+      "strides" => strides = attr.ints.clone().iter()
+        .map(|&x| x as f32)
+        .collect::<Vec<f32>>()
+        .into(),
+      _ => panic!("ATTRIBUTE NAME FOR CONVOLUTION NOT FOUND, {}",
+                  <String as AsRef<str>>::as_ref(&attr.name))
+    }
+  }
+
+  #[cfg(feature = "debug_prints")]{
+    dbg!(input_image.clone());
+    dbg!(kernel.clone());
+  }
+  if !pads.is_empty() {
+    if pads[[0]] > 0.0 || pads[[1]] > 0.0 || pads[[2]] > 0.0 || pads[[3]] > 0.0 {
+      auto_pad = Padding::NotSet;
+    }
+  }
+  #[cfg(feature = "debug_prints")]{
+    println!("PADS: {:?}, STRIDES: {:?}, DILATIONS: {:?}", pads, strides, dilations);
+  }
+  let conv_layer = ConvolutionLayer::new_onnx_tensor_flow(kernel.clone(),
+                                                       bias,
+                                                       auto_pad,
+                                                       dilations,
+                                                       group,
+                                                       pads,
+                                                       strides);
+  let output_layer: Array4<f32> = conv_layer.convolve(&input_image);
+  #[cfg(feature = "debug_prints")]{
+    dbg!("Conv: {:?}", output_layer.clone());
+  }
+  #[cfg(feature = "operations_prints")]{
+    println!("Convolution, done! by {}", thread::current().name().unwrap_or("MAIN THREAD"));
+  }
+  let mut map_mut = output_container.lock().unwrap();
+  map_mut.insert(node.output[0].clone(), (None, Some(output_layer)));
+}
+
 
 /// OPSET VERSION: 8
 /// Performs a convolution on the given image data using this layers parameters.
@@ -106,7 +221,7 @@ impl<F: 'static + Float + std::ops::AddAssign + std::default::Default + std::con
 /// - out: Output data, of shape (B, F, H', W')
 #[allow(unused_assignments)]
 #[allow(unused_variables)]
-pub fn conv2d<'a, T, V, F: 'static + Float + std::ops::AddAssign + std::default::Default + std::ops::AddAssign<f32>>(
+fn conv2d<'a, T, V, F: 'static + Float + std::ops::AddAssign + std::default::Default + std::ops::AddAssign<f32>>(
   kernel_weights: T,
   im2d: T,
   bias: Option<&Array1<F>>,
@@ -401,7 +516,7 @@ pub fn conv2d<'a, T, V, F: 'static + Float + std::ops::AddAssign + std::default:
   add_bias(&output, bias)
 }
 
-pub(in crate) fn get_padding_size(
+fn get_padding_size(
   input_h: usize,
   input_w: usize,
   stride_h: usize,
@@ -442,7 +557,7 @@ pub(in crate) fn get_padding_size(
 }
 
 #[allow(unused_assignments)]
-pub(in crate) fn im2col_ref<'a, T, F: 'a + Float + std::default::Default>(
+fn im2col_ref<'a, T, F: 'a + Float + std::default::Default>(
   im_arr: T,
   ker_height: usize,
   ker_width: usize,
@@ -548,7 +663,7 @@ pub(in crate) fn im2col_ref<'a, T, F: 'a + Float + std::default::Default>(
 }
 
 #[allow(unused_assignments)]
-pub(in crate) fn ker2col_ref<'a, T, F: 'a + Float + std::default::Default>(
+fn ker2col_ref<'a, T, F: 'a + Float + std::default::Default>(
   im_arr: T,
   ker_height: usize,
   ker_width: usize,
@@ -587,7 +702,7 @@ pub(in crate) fn ker2col_ref<'a, T, F: 'a + Float + std::default::Default>(
   cols_img
 }
 
-pub(in crate) fn add_bias<F>(x: &Array4<F>, bias: Option<&Array1<F>>) -> Array4<F>
+fn add_bias<F>(x: &Array4<F>, bias: Option<&Array1<F>>) -> Array4<F>
   where
     F: 'static + Float + std::ops::AddAssign,
 {
@@ -717,7 +832,7 @@ fn test_convolution_1_channel_out_2_channel_in(){
 }
 
 #[allow(dead_code)]
-pub fn test_convolution(){
+fn test_convolution(){
   test_convolution_1_channels_out_1_channels_in();
   println!("\n\n");
   test_convolution_1_channel_out_2_channel_in();

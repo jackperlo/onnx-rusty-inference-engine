@@ -1,8 +1,56 @@
-use ndarray::{Array4, Array};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use ndarray::{Array4, Array, Array2};
+use onnx_protobuf::NodeProto;
 use rand::{Rng, SeedableRng};
 
+/// This function manages the dropout operation
+/// # Arguments
+/// * output_container: contains the partial results computed by inference operations
+/// * node: node on which dropout has to be performed
+pub fn drop_out(output_container: &Arc<Mutex<HashMap<String,
+  (Option<Array2<f32>>, Option<Array4<f32>>)>>>,
+               node: &NodeProto) {
+  let map = output_container.lock().unwrap();
+  let input = Array4::from(
+    map.get(node.input[0].as_str()).unwrap().1.clone().unwrap());
+
+  drop(map);
+
+  let mut ratio: Option<f32> = None;
+  for attr in &node.attribute {
+    ratio = match attr.name.as_ref() {
+      "ratio" => Some(attr.f),
+      _ => panic!("ATTRIBUTE NAME FOR DROP OUT NOT FOUND, {}",
+                  <String as AsRef<str>>::as_ref(&attr.name))
+    };
+  }
+  let output_layer = dropout_wrapper(input,
+                                         ratio,
+                                         None,
+                                         false,
+                                         false);
+
+  /*
+   TODO: manage mask
+   if output_layer.1.is_some() {
+     println!("Mask: {:?}", output_layer.1.unwrap());
+     hashmap_outputs_to_inputs.insert(outputs[1].clone(), output_layer.1.unwrap());
+   }
+  */
+  #[cfg(feature = "debug_prints")]{
+    dbg!("Dropout: {:?}", output_layer.0.clone());
+  }
+  #[cfg(feature = "operations_prints")]{
+    println!("Dropout, done! by {}", thread::current().name().unwrap_or("MAIN THREAD"));
+  }
+  let mut map_mut = output_container.lock().unwrap();
+  map_mut.insert(node.output[0].clone(), (None, Some(output_layer.0)));
+}
+
 ///VERSION 7 of Dropout Operation
-pub fn dropout(
+fn dropout_wrapper(
   x: Array4<f32>,
   ratio: Option<f32>,
   seed: Option<u64>,
@@ -41,7 +89,7 @@ pub fn dropout(
 }
 
 #[allow(dead_code)]
-pub fn test_dropout(){
+fn test_dropout(){
 // Input has shape (batch_size, channels, height, width)
   let input = Array::from_shape_vec(
     (1, 1, 4, 4),
@@ -52,7 +100,7 @@ pub fn test_dropout(){
   println!("Input{:?}", input);
 
   let _ratio = 0.5; //default ratio
-  let output = dropout(input, None, None, false, false);
+  let output = dropout_wrapper(input, None, None, false, false);
 
   println!("Output: {:?}", output);
 }

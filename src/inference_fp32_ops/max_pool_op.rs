@@ -1,9 +1,14 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use ndarray::*;
 use num_traits::Float;
+use onnx_protobuf::{NodeProto, TensorProto, ValueInfoProto};
+use crate::inference_engine::utils::get_stored_tensor;
 
 // Padding (specific way of adding zeros to the input matrix) kind used in the convolution.
 #[derive(PartialEq, Debug, Clone, Copy)]
-pub enum Padding {
+enum Padding {
   // explicit padding (specified in "pads" parameter)
   NotSet,
   // output has same shape as input; if odd padding number, extra-padding added at bottom
@@ -18,7 +23,7 @@ pub enum Padding {
 // The weight matrix (aka kernel) shall have dimension (in that order)
 // channels/groups(input channels), feature maps(output channels), kernel width, kernel height,
 // specified by kernel_size
-pub struct ConvolutionLayer<F: Float> {
+struct ConvolutionLayer<F: Float> {
   pub(in crate) auto_pad: Padding,
   pub(in crate) pads: Array1<F>,
   pub(in crate) kernel_size: Array2<i32>,
@@ -28,7 +33,7 @@ pub struct ConvolutionLayer<F: Float> {
 
 impl<F: 'static + Float + std::ops::AddAssign> ConvolutionLayer<F> where f32: From<F> {
   // Creates new convolution layer.
-  pub fn new(
+  fn new(
     auto_pad: Padding,
     pads: Array1<F>,
     kernel_size: Array2<i32>,
@@ -39,7 +44,7 @@ impl<F: 'static + Float + std::ops::AddAssign> ConvolutionLayer<F> where f32: Fr
   }
 
   /// Analog to max_pool2d
-  pub fn max_pool(&self, image: &Array4<F>) -> Array4<F> {
+  fn max_pool(&self, image: &Array4<F>) -> Array4<F> {
     max_pool2d(
       image,
       self.auto_pad,
@@ -49,6 +54,78 @@ impl<F: 'static + Float + std::ops::AddAssign> ConvolutionLayer<F> where f32: Fr
       &self.strides,
     )
   }
+}
+
+/// This function manages the max pooling operation
+/// # Arguments
+/// * output_container: contains the partial results computed by inference operations
+/// * node: node on which max pooling has to be performed
+/// * model_inputs: inputs of the onnx model
+/// * model_initializers: initializers of the onnx model
+pub fn max_pool(output_container: &Arc<Mutex<HashMap<String,
+  (Option<Array2<f32>>, Option<Array4<f32>>)>>>,
+               node: &NodeProto,
+               model_inputs: &Vec<ValueInfoProto>,
+               model_initializers: &Vec<TensorProto>) {
+  let map = output_container.lock().unwrap();
+
+  let input_image = match map.get(&node.input[0]).clone() {
+    Some(image) => image.1.clone().unwrap(),
+    None => {
+      let (arr4, _, _, _, _) = get_stored_tensor(0,
+                                                 node,
+                                                 model_inputs,
+                                                 model_initializers);
+      arr4.unwrap()
+    }
+  };
+
+  drop(map);
+
+  let mut kernel_shape: Array2<i32> = Default::default();
+  let mut strides: Array1<f32> = Default::default();
+  let mut pads: Array1<f32> = Default::default();
+  let mut auto_pad: Padding = Padding::Valid;
+  let mut storage_order: Option<i64> = None;
+  for attr in &node.attribute {
+    match attr.name.as_ref() {
+      "auto_pad" => match std::str::from_utf8(&attr.s.clone()).unwrap() {
+        "SAME_UPPER" => auto_pad = Padding::SameUpper,
+        "SAME_LOWER" => auto_pad = Padding::SameLower,
+        "VALID" => auto_pad = Padding::Valid,
+        "NOTSET" => auto_pad = Padding::NotSet,
+        _ => panic!("MaxPool Auto Pad specified not found: {}",
+                    std::str::from_utf8(&attr.s.clone()).unwrap())
+      },
+      "kernel_shape" => kernel_shape = Array2::zeros(
+        (attr.ints[0].clone() as usize, attr.ints[1].clone() as usize)),
+      "pads" => pads = attr.ints.clone().iter()
+        .map(|&x| x as f32)
+        .collect::<Vec<f32>>()
+        .into(),
+      "storage_order" => storage_order = Some(attr.i),
+      "strides" => strides = attr.ints.clone().iter()
+        .map(|&x| x as f32)
+        .collect::<Vec<f32>>()
+        .into(),
+      _ => panic!("ATTRIBUTE NAME FOR MAX POOL NOT FOUND, {}",
+                  <String as AsRef<str>>::as_ref(&attr.name))
+    }
+  }
+  let conv_layer = ConvolutionLayer::new(auto_pad,
+                                         pads,
+                                         kernel_shape,
+                                         storage_order,
+                                         strides);
+  let output_layer: Array4<f32> = conv_layer.max_pool(&input_image);
+  #[cfg(feature = "debug_prints")]{
+    dbg!("MaxPool: {:?}", output_layer.clone());
+  }
+  #[cfg(feature = "operations_prints")]{
+    println!("Max Pooling, done! by {}", thread::current().name().unwrap_or("MAIN THREAD"));
+  }
+  let mut map_mut = output_container.lock().unwrap();
+  map_mut.insert(node.output[0].clone(), (None, Some(output_layer)));
 }
 
 /// OPSET VERSION: 8
@@ -77,7 +154,7 @@ impl<F: 'static + Float + std::ops::AddAssign> ConvolutionLayer<F> where f32: Fr
 /// - out: Output data, of shape (B, F, H', W')
 #[allow(unused_variables)]
 #[allow(unused_assignments)]
-pub fn max_pool2d<'a, T, V, F: 'static + Float + std::ops::AddAssign>(
+fn max_pool2d<'a, T, V, F: 'static + Float + std::ops::AddAssign>(
   im2d: T,
   auto_pad: Padding,
   pads: V,
@@ -283,7 +360,7 @@ pub fn max_pool2d<'a, T, V, F: 'static + Float + std::ops::AddAssign>(
 }
 
 
-pub(in crate) fn get_padding_size(
+fn get_padding_size(
   input_h: usize,
   input_w: usize,
   stride_h: usize,
@@ -323,7 +400,7 @@ pub(in crate) fn get_padding_size(
   )
 }
 
-pub(in crate) fn im2col_ref<'a, T, F: 'a + Float>(
+fn im2col_ref<'a, T, F: 'a + Float>(
   im_arr: T,
   ker_height: usize,
   ker_width: usize,
@@ -372,7 +449,7 @@ pub(in crate) fn im2col_ref<'a, T, F: 'a + Float>(
 }
 
 #[allow(dead_code)]
-pub fn test_max_pool() {
+fn test_max_pool() {
   // Input has shape (batch_size, channels, height, width)
   let input = Array::from_shape_vec(
     (1, 1, 4, 4),
